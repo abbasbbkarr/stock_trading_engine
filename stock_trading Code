@@ -1,0 +1,77 @@
+import threading
+import random
+import time
+
+class Order:
+    BUY = "BUY"
+    SELL = "SELL"
+
+    def __init__(self, order_type, ticker, quantity, price):
+        self.order_type = order_type
+        self.ticker = ticker
+        self.quantity = quantity
+        self.price = price
+        self.matched = threading.Event()  # Lock-free way to track matched orders
+
+class StockExchange:
+    def __init__(self):
+        self.orders = []
+        self.order_lock = threading.Lock()  # Ensures thread safety for adding orders
+
+    def add_order(self, order_type, ticker, quantity, price):
+        order = Order(order_type, ticker, quantity, price)
+        with self.order_lock:  # Ensuring safe addition of orders
+            self.orders.append(order)
+
+    def match_orders(self):
+        matched_orders = []
+        for i in range(len(self.orders)):
+            if self.orders[i].matched.is_set():  # Skip already matched orders
+                continue
+
+            for j in range(i + 1, len(self.orders)):
+                if self.orders[j].matched.is_set():  
+                    continue
+
+                if self.orders[i].ticker == self.orders[j].ticker:
+                    buy_order, sell_order = None, None
+                    if self.orders[i].order_type == Order.BUY and self.orders[j].order_type == Order.SELL:
+                        buy_order, sell_order = self.orders[i], self.orders[j]
+                    elif self.orders[i].order_type == Order.SELL and self.orders[j].order_type == Order.BUY:
+                        buy_order, sell_order = self.orders[j], self.orders[i]
+
+                    if buy_order and sell_order and buy_order.price >= sell_order.price:
+                        executed_qty = min(buy_order.quantity, sell_order.quantity)
+                        buy_order.quantity -= executed_qty
+                        sell_order.quantity -= executed_qty
+
+                        if buy_order.quantity == 0:
+                            buy_order.matched.set()
+                        if sell_order.quantity == 0:
+                            sell_order.matched.set()
+
+                        matched_orders.append((buy_order.ticker, executed_qty, (buy_order.price + sell_order.price) / 2))
+        
+        for match in matched_orders:
+            print(f"Matched Order: {match[0]} | Qty: {match[1]} | Price: {match[2]}")
+
+def random_order_generator(exchange):
+    tickers = ["AAPL", "GOOG", "MSFT", "AMZN"]
+    for _ in range(20):
+        order_type = random.choice([Order.BUY, Order.SELL])
+        ticker = random.choice(tickers)
+        quantity = random.randint(1, 100)
+        price = round(random.uniform(50, 500), 2)
+        exchange.add_order(order_type, ticker, quantity, price)
+        time.sleep(0.1)  # Simulating real-time order flow
+
+if __name__ == "__main__":
+    exchange = StockExchange()
+    
+    order_thread = threading.Thread(target=random_order_generator, args=(exchange,))
+    order_thread.start()
+
+    time.sleep(2)  
+    exchange.match_orders()
+
+    order_thread.join()
